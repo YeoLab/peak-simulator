@@ -1,8 +1,5 @@
-.project
-.pydevproject
+README
 setup.py
-setup.py~
-.externalToolBuilders/Shuffler_Test_Tool [Builder].launch
 SimulatePeaks.egg-info/PKG-INFO
 SimulatePeaks.egg-info/SOURCES.txt
 SimulatePeaks.egg-info/dependency_links.txt

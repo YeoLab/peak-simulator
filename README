@@ -6,4 +6,25 @@ or
 
 python setup.py install 
 
+Run:
 simulate_peaks <args>
+
+Running Argunments (will change soon)
+
+Options:
+  -h, --help            show this help message and exit
+  -g FILE.bam, --genome=FILE.bam
+                        A bed file defining the genome (or transcriptiome) to
+                        distribute reads across
+  -r READS, --reads=READS
+                        The aproximate number of reads to assign
+  -p PEAK_SIZE, --peak_size=PEAK_SIZE
+                        The size of peaks to create
+  -n NUM_PEAKS, --num_peaks=NUM_PEAKS
+                        The number of peaks to create
+  -c PEAK_COEFF, --peak_coeff=PEAK_COEFF
+                        Coefficent that increases the weight of peak
+                        locations, higher value = more obvious peaks
+  -o OUTFILE, --outfile=OUTFILE
+                        a bed and bam file root for outputting results,
+                        default:out
