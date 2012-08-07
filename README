@@ -1,0 +1,9 @@
+Install 
+
+easy_install <something>
+
+or 
+
+python setup.py install 
+
+simulate_peaks <args>
