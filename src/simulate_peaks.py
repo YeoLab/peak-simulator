@@ -10,7 +10,7 @@ Created on Aug 2, 2012
 
 import random
 import numpy
-from numpy import round, arange, cumsum, where, zeros
+from numpy import array, round, arange, cumsum, where, zeros
 import pysam
 import pybedtools
 from optparse import OptionParser
@@ -59,6 +59,43 @@ class Weighted_interval(pybedtools.Interval):
         self.peaks = set([])
 
         #should define accessor method for weights that makes it fail if its refefined to something other than the size of the interval
+    def add_peak(self, peak):
+        
+        """
+        
+        Adds peak in place, returns true if peak is added and false if not
+        peak is a tuple start, stop in the range of the interval
+        
+        """
+        
+        start, stop = peak
+        
+        #checks boundry conditions, avoids off by one bugs 
+        if stop > (self.stop - 1) or start < self.start:
+            return False
+        
+        #converts into internal locations for adding to weights
+        #weight_start = self.start - start
+        #weight_stop  = self.start - stop
+        
+        #makes sure there aren't any overlaps
+        for cur_peak in self.peaks:
+            if self.getOverlap(cur_peak, peak) > 0:
+                return False
+            
+        self.peaks.add(peak)
+        
+        return True
+    
+    def getOverlap(self, a, b):
+        
+        """
+        
+        Returns the overlap between two intervals
+        
+        """
+        
+        return max(0, min(a[1], b[1]) - max(a[0], b[0]))        
         
 def create_genome(bed):
     
@@ -83,7 +120,7 @@ def create_genome(bed):
  
     return genome_list        
 
-def assign_peaks(genome, peak_size, num_peaks):
+def assign_random_peaks(genome, peak_size, num_peaks):
     
     """
 
@@ -106,30 +143,61 @@ def assign_peaks(genome, peak_size, num_peaks):
     for count in range(num_peaks):
     
         #initially we don't know what it is so its a duplicate
-        duplicate = True
+        duplicate = False
         
-        #Small potental for infinate loop here
-        while duplicate:
-            duplicate = False
-            genomic_start = random.randint(0, total_genome_size - 1)
+        #No potental for infanite loop, but its possible that if the 
+        tries = 0
+        while not duplicate:
+            tries += 1
+
+            genomic_start = random.randint(0, (total_genome_size - 1))
+  
+            #Gets the index of the interval to start at
             interval = where((genome_locations > genomic_start) == True)[0][0]
-            interval_start = genomic_start - interval
-            interval_stop  = interval_start + peak_size
-            #make sure the included peak has no overlaps, 
-            #if it is re-generate start and stop sites
+
+            #Converts the merged genome locations into regions in the interval to start at
+            peak_start =  genome[interval].start + genome_locations[interval] - genomic_start
+            peak_stop  = peak_start + peak_size
             
-            for cur_start, cur_stop in genome[interval].peaks:
-                if ((cur_start < interval_start and cur_stop > interval_start) or 
-                    (cur_start < interval_stop and cur_stop  > interval_stop)):
-                    duplicate = True
-                    break
+            print genome[interval],
+            print peak_start, peak_stop
+            
+            duplicate = genome[interval].add_peak((peak_start, peak_stop))
+            print duplicate
+            if tries > 1000:
+                print "failed placing all peaks (not enough space in the genome), continuing with placed peaks"
+                return genome
+                    
+                 
                     
         
         #adds a peak to the genomic interval
-        genome[interval].peaks.add((interval_start, interval_stop))
+        
     return genome
 
+def assign_static_peaks(genome, peaks):
+    
+    """
+    
+    Assigns peaks to a genome from a file that specifies peak locations
+    
+    genome - list of Weighted_interval objects
+    peaks  - bed file that defines where peaks occur.  Assumes that a peak is a subset of an interval in the genome.
+    
+    """
+    
+    tool = pybedtools.BedTool(peaks)
+    
+    #could hash this, but I don't feel like it right now, also the number of intervals I have should be fairly small
+    #assign all peaks to proper genomic interval
+    for peak_interval in tool:
+        for genome_interval in genome:
+            if (genome_interval.chrom == peak_interval.chrom):
+                result = genome_interval.add_peak((peak_interval.start, peak_interval.stop))
+                if not result:
+                    raise ValueError("peak %s overlaps with another peak" % (str(peak_interval)))
 
+    return genome
 
 def distribute_background_weights(genome, shape, scale):
     
@@ -155,7 +223,7 @@ def distribute_background_weights(genome, shape, scale):
 def distribute_peak_weights(genome, enrichment_coeff):
 
     """
-    PRECONDITION: Must have called assign_peaks and distribute_background_weights on a genome list before calling distribute_peak_weights
+    PRECONDITION: Must have called assign_random_peaks and distribute_background_weights on a genome list before calling distribute_peak_weights
     Returns a genome with both peak weights and background weights calculated as an array
     
     peaks - list of Weighted_interval [(start, stop)] that already has background distribution called and peaks defined
@@ -170,10 +238,13 @@ def distribute_peak_weights(genome, enrichment_coeff):
     
     #convert the peaks into a list of tuples so I can index them 
     #all together better
+    #ok this is going to be a hack
+    #should define nice accessor in Weighted_interval object
+    #but instead I'll just correct locations here
     peak_list = []
     for interval in genome:
         for start, stop in interval.peaks:
-            peak_list.append((interval, start, stop))
+            peak_list.append((interval, start - interval.start, stop - interval.start))
     
     
     #gets the total size of all peaks and the total background weights 
@@ -200,16 +271,14 @@ def distribute_peak_weights(genome, enrichment_coeff):
     #TODO distribute weights normally instead of unifromily 
     return genome
     
-        
-    
-    
-        
     #pick a peak based on its total binding weight
     #update weight at peak
     #iterate until weight is done being added
     
     #redistribute peaks as a bionimal distribution 
-def distribute_reads(genome, total_reads):
+
+def distribute_reads_slow(genome, total_reads):
+    
     """
     
     Distributes reads along the weights array returns an array of number of reads at a specific start location
@@ -218,12 +287,45 @@ def distribute_reads(genome, total_reads):
     num_reads - total number of reads to distribute
     read_length - length of reads to distribute
     
-    TODO: print out 
+    slower than distribute reads, but distributes exactly the correct number of reads via a 
+    biased sampling of the generated probablities (this might be a bit to much abstraction, but
+    it makes things nice and abstract)
     
     """
     
     total_weight = sum(map(lambda x: sum(x.weights), genome))
     
+    interval_lengths = cumsum(map(lambda x: len(x), genome))
+    
+    all_weights = cumsum(numpy.concatenate(map(lambda x: x.weights, genome)) / total_weight)
+    
+    
+    #premake all read locations
+    for interval in genome:
+        interval.start_sites = numpy.zeros(len(interval.weights))
+    
+    
+    #assign read to a specific start site 
+    for read in range(total_reads):
+        read_assignment = where((all_weights > random.random()) == True)[0][0]
+        interval = where((interval_lengths > read_assignment) == True)[0][0]
+        genome[interval].start_sites[read_assignment - interval_lengths[interval]] += 1 
+    
+    return genome
+def distribute_reads(genome, total_reads):
+    """
+    
+    Distributes reads along the weights array returns an array of number of reads at a specific start location
+    
+    weight - an array of weights to distribute reads along
+    num_reads - total number of reads to distribute
+    read_length - length of reads to distribute
+
+    """
+    
+    total_weight = sum(map(lambda x: sum(x.weights), genome))
+    
+    #premake all read locations
     for interval in genome:
         interval.start_sites = numpy.zeros(len(interval.weights))
     
@@ -277,14 +379,20 @@ def output_bam(genome, genome_lengths, read_length, outfile_name):
     #prints out all reads in reads
     read_count = 0
     for interval in genome:
+        
+        #get chr index
+        
+        chroms = array(map(lambda x: x['SN'], header['SQ']))
+        index = where((chroms == interval.chrom) == True)[0][0]
+        
         for read_location, num_read in enumerate(interval.start_sites):
             for read in arange(num_read):
                 cur_read = pysam.AlignedRead()
                 cur_read.qname = "read_%i" % (read_count)
                 cur_read.seq = "A" * read_length
                 cur_read.flag = 16
-                cur_read.rname = 0 
-                cur_read.pos = read_location
+                cur_read.rname = index 
+                cur_read.pos = (interval.start + read_location) - 1 #because strange conversion with pysam tools
                 cur_read.mapq = 255
                 cur_read.cigar = ( (0, read_length - 1), (1, 1) )
                 cur_read.mrnm = 0 
@@ -307,7 +415,9 @@ def output_bed(genome, outfile):
     bedstring = ""
     for interval in genome:
         for start, stop in interval.peaks:
-            bedstring += "%s\t%s\t%s\t\n" % (interval.chrom, start, stop) 
+            
+            #really hacky way to correct for off by one errors
+            bedstring += "%s\t%s\t%s\t\n" % (interval.chrom, (start), (stop)) 
 
     tool = pybedtools.BedTool(bedstring, from_string= True)
     tool.saveas(outfile)
@@ -321,6 +431,7 @@ def run():
     parser = OptionParser(usage=usage, description=description)
     parser.add_option("--locations", "-l", dest="bed", help="A bed file defining where in the genome to distribute reads", type="string", metavar="FILE.bam")
     parser.add_option("--genome", "-g", dest="genome", help="A bed file defining the genome of intrest chromosome <tab> length", type="string", metavar="FILE.bam")
+    parser.add_option("--peak_locations", type="string", default = None, metavar="FILE.bam", dest="peak_locations", help="The location of peaks to assign reads to (overwrites random peak generator)")
     parser.add_option("--reads", "-r", type="int", default = 10000, dest="reads", help="The aproximate number of reads to assign default:%default")
     parser.add_option("--peak_size", "-p", type="int", default = 50, dest="peak_size", help="The size of peaks to create default:%default")
     parser.add_option("--num_peaks", "-n", type="int", default = 100, dest="num_peaks", help="The number of peaks to create")
@@ -328,26 +439,22 @@ def run():
     parser.add_option("--gamma_shape", type="int", default = 5, dest="gamma_shape", help="Coefficent that increases the weight of peak locations, higher value = more obvious peaks")
     parser.add_option("--gamma_scale", type="int", default = 10, dest="gamma_scale", help="Coefficent that increases the weight of peak locations, higher value = more obvious peaks")
     parser.add_option("--outfile", "-o", dest="outfile", default="out", help="a bed and bam file root for outputting results, default:%default")
-    
-    #Things to add
-    #Distribution, 
-    
+        
     (options,args) = parser.parse_args()
 
     genome = create_genome(options.bed)
-
-    genome = assign_peaks(genome, options.peak_size, options.num_peaks)
+    
+    if options.peak_locations is not None:
+        genome = assign_static_peaks(genome, options.peak_locations)
+    else:
+        genome = assign_random_peaks(genome, options.peak_size, options.num_peaks)
 
     genome = distribute_background_weights(genome, options.gamma_shape, options.gamma_scale)
-
     genome = distribute_peak_weights(genome, options.peak_coeff)
-
-    genome = distribute_reads(genome, options.reads)
+    genome = distribute_reads_slow(genome, options.reads)
  
     output_bam(genome, options.genome, 50, options.outfile + ".bam")
     output_bed(genome, options.outfile + ".bed")
-    #
-    #pass
 
 if __name__ == "__main__":
     run()

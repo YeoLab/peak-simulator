@@ -4,7 +4,7 @@ Created on Aug 6, 2012
 @author: gabrielp
 '''
 import unittest
-from src.simulate_peaks import distribute_reads, distribute_peak_weights, output_bam, output_bed, create_genome, distribute_background_weights, Weighted_interval, assign_peaks, make_header
+from src.simulate_peaks import *
 from numpy import * #array, ones, mean, zeros, concatenate
 from numpy.testing import *
 import pkg_resources
@@ -19,6 +19,32 @@ class Test(unittest.TestCase):
     Tests simulate peaks module
     
     """
+    
+    def test_Weighted_interval_add_peaks(self):
+        
+        """
+        
+        Tests add peaks function in weighted interval
+        
+        """
+        
+        interval = Weighted_interval(pybedtools.Interval("chr1", 10, 100))
+        
+        result = interval.add_peak((90, 110))
+        self.assertFalse(result, "failled overlapping edge add at end")
+        
+        result = interval.add_peak((5, 60))
+        self.assertFalse(result, "failled overlapping edge add at start")
+        
+        result = interval.add_peak((5, 110))
+        self.assertFalse(result, "failled overlapping edge add at both ends")
+        
+        result = interval.add_peak((15, 25))
+        self.assertTrue(result, "failled standard adding function")
+        
+        result = interval.add_peak((20,30))
+        self.assertFalse(result, "failled adding over another peak")
+        
 
     def test_create_genome(self):
         
@@ -48,13 +74,13 @@ class Test(unittest.TestCase):
         #handle = pkg_resources.resource_filename(__name__, "../test/not_bed.bed")
         #result = create_genome(handle)
 
-    def test_assign_peaks(self):
+    def test_assign_random_peaks(self):
         genome = [Weighted_interval(pybedtools.Interval("chr1", 1, 100000)),
                    Weighted_interval(pybedtools.Interval("chr1", 1, 100000))]
         
         peak_size = 50
         num_peaks = 10
-        result = assign_peaks(genome, peak_size, num_peaks)
+        result = assign_random_peaks(genome, peak_size, num_peaks)
         
         
         total_peaks = 0
@@ -67,11 +93,70 @@ class Test(unittest.TestCase):
             
             #test peak size
             for start, stop in location.peaks:
+                self.assertGreater(start, 0, "start is less than zero")
+                self.assertGreater(stop, 0, "stop is less than zero")
                 assert peak_size == stop - start
         
         #test proper number of peaks
         self.assertEqual(total_peaks, num_peaks)
+    
+    def test_assign_random_peaks_loopy(self):
         
+        """
+        
+        Tests to make sure genomes of too small size still work.  
+        Simply prints out less than the requested number of peaks
+        
+        No test, just make sure we don't go into an infanate loop here
+        
+        """
+        genome = [Weighted_interval(pybedtools.Interval("chr1", 1, 100)),
+                   Weighted_interval(pybedtools.Interval("chr2", 1, 100))]
+        
+        peak_size = 50
+        num_peaks = 10
+        result = assign_random_peaks(genome, peak_size, num_peaks)
+        
+        
+        total_peaks = 0
+        for location in result:
+            if location.peaks is None:
+                continue
+            
+            print location.peaks
+            total_peaks += len(location.peaks)
+            
+            #test peak size
+            for start, stop in location.peaks:
+                self.assertGreater(start, 0, "start is less than zero")
+                self.assertGreater(stop, 0, "stop is less than zero")
+                assert peak_size == stop - start
+        
+        
+    def test_assign_static_peaks(self):
+        
+        """
+        
+        Tests assigning static peaks from a file
+        
+        """
+        
+        genome = [Weighted_interval(pybedtools.Interval("chr1", 1, 100000)),
+                   Weighted_interval(pybedtools.Interval("chr2", 1, 100000))]
+        
+        #tests error mode
+        peaks = pkg_resources.resource_filename(__name__, "../test/peaks_test_err.bed")
+        self.assertRaises(ValueError, assign_static_peaks, genome, peaks)
+        
+        #tests correect mode
+        genome = [Weighted_interval(pybedtools.Interval("chr1", 1, 100000)),
+                   Weighted_interval(pybedtools.Interval("chr2", 1, 100000))]
+        peaks = pkg_resources.resource_filename(__name__, "../test/peaks_test.bed")
+        genome = assign_static_peaks(genome, peaks)
+        self.assertSetEqual(genome[0].peaks, set([(50,100)]))
+        self.assertSetEqual(genome[1].peaks, set([(50,100)]))
+        
+        #should test value error 
     def test_distribute_background_weights(self):
         
         """
@@ -202,6 +287,7 @@ class Test(unittest.TestCase):
         Tests that a bed file is outputed
         
         """
+        
         genome = [Weighted_interval(pybedtools.Interval("chr1", 1, 100000)),
                   Weighted_interval(pybedtools.Interval("chr2", 1, 100000))]
         

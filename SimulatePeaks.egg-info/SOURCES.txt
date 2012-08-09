@@ -8,4 +8,10 @@ SimulatePeaks.egg-info/top_level.txt
 src/__init__.py
 src/simulate_peaks.py
 test/__init__.py
+test/bam_test.bam
+test/bed_test.bed
+test/empty.bed
+test/header_test.txt
+test/not_bed.bed
+test/test.bed
 test/test_simulate_peaks.py
